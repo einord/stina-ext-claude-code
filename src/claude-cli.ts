@@ -20,6 +20,7 @@ export interface ClaudeCliOptions {
 export type CliStreamEvent =
   | { type: 'content'; text: string }
   | { type: 'thinking'; text: string }
+  | { type: 'tool_start'; name: string; input: unknown; toolCallId: string }
   | { type: 'done'; usage?: { inputTokens: number; outputTokens: number }; sessionId?: string }
   | { type: 'error'; message: string }
   | { type: 'session_init'; sessionId: string }
@@ -157,7 +158,7 @@ export async function* runClaudeCode(options: ClaudeCliOptions): AsyncGenerator<
           if (block.type === 'text') {
             yield { type: 'content', text: block.text }
           } else if (block.type === 'tool_use') {
-            yield { type: 'content', text: `\n[Tool: ${block.name}]\n` }
+            yield { type: 'tool_start', name: block.name, input: block.input, toolCallId: block.id }
           }
         }
       } else if (event.type === 'result') {

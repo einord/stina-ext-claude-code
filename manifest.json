@@ -2,7 +2,7 @@
   "$schema": "https://stina.app/schemas/extension-manifest.json",
   "id": "claude-code-provider",
   "name": "Claude Code AI Provider",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Connect Stina to Claude Code CLI for AI assistance with tool capabilities.",
   "type": "provider",
   "author": {

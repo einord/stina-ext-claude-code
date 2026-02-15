@@ -164,6 +164,26 @@ async function* streamChat(
           yield { type: 'thinking', text: event.text }
           break
 
+        case 'tool_start': {
+          const MCP_PREFIX = 'mcp__stina-tools__'
+          if (relay && event.name.startsWith(MCP_PREFIX)) {
+            // Stina tool via MCP — strip prefix and await real result from relay
+            const strippedName = event.name.slice(MCP_PREFIX.length)
+            yield { type: 'tool_start', name: strippedName, input: event.input, toolCallId: event.toolCallId }
+            try {
+              const result = await relay.waitForResult()
+              yield { type: 'tool_end', name: strippedName, output: result.data ?? result, toolCallId: event.toolCallId }
+            } catch {
+              yield { type: 'tool_end', name: strippedName, output: { status: 'completed' }, toolCallId: event.toolCallId }
+            }
+          } else {
+            // Built-in Claude Code tool — no relay result available
+            yield { type: 'tool_start', name: event.name, input: event.input, toolCallId: event.toolCallId }
+            yield { type: 'tool_end', name: event.name, output: { status: 'completed' }, toolCallId: event.toolCallId }
+          }
+          break
+        }
+
         case 'session_init':
           // Store session mapping for future resume
           sessionMap.set(conversationId, event.sessionId)

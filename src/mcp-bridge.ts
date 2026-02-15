@@ -16,6 +16,8 @@ export interface ToolsBridge {
 export interface ToolRelayServer {
   port: number
   close: () => void
+  /** Wait for the next tool result from the relay (FIFO queue with 30s timeout) */
+  waitForResult: () => Promise<ToolResult>
 }
 
 /**
@@ -28,6 +30,54 @@ export async function startToolRelay(
 ): Promise<ToolRelayServer> {
   const net = await import('node:net')
 
+  // Result queue + waiters for waitForResult()
+  const resultQueue: ToolResult[] = []
+  const resultWaiters: Array<{ resolve: (r: ToolResult | PromiseLike<ToolResult>) => void; reject: (e: Error) => void }> = []
+
+  function onToolResult(result: ToolResult): void {
+    if (resultWaiters.length > 0) {
+      // A consumer is already waiting — resolve immediately
+      const waiter = resultWaiters.shift()!
+      waiter.resolve(result)
+    } else {
+      // No consumer yet — queue the result
+      resultQueue.push(result)
+    }
+  }
+
+  function waitForResult(): Promise<ToolResult> {
+    // If a result is already queued, resolve immediately
+    if (resultQueue.length > 0) {
+      return Promise.resolve(resultQueue.shift()!)
+    }
+    // Otherwise queue a waiter and resolve when result arrives
+    return new Promise<ToolResult>((resolve, reject) => {
+      const waiter = { resolve, reject }
+      resultWaiters.push(waiter)
+
+      // 30-second timeout
+      const timer = setTimeout(() => {
+        const idx = resultWaiters.indexOf(waiter)
+        if (idx !== -1) {
+          resultWaiters.splice(idx, 1)
+          reject(new Error('waitForResult timed out after 30s'))
+        }
+      }, 30_000)
+
+      // Prevent the timer from keeping the process alive
+      if (typeof timer === 'object' && 'unref' in timer) {
+        timer.unref()
+      }
+
+      // Wrap resolve to clear timer
+      const origResolve = waiter.resolve
+      waiter.resolve = (r: ToolResult | PromiseLike<ToolResult>) => {
+        clearTimeout(timer)
+        origResolve(r)
+      }
+    })
+  }
+
   return new Promise((resolve, reject) => {
     const server = net.createServer((socket) => {
       let buffer = ''
@@ -39,7 +89,7 @@ export async function startToolRelay(
 
         for (const line of lines) {
           if (!line.trim()) continue
-          handleRelayMessage(line, socket, tools, log, userId)
+          handleRelayMessage(line, socket, tools, log, userId, onToolResult)
         }
       })
 
@@ -59,6 +109,7 @@ export async function startToolRelay(
       resolve({
         port: addr.port,
         close: () => server.close(),
+        waitForResult,
       })
     })
 
@@ -71,7 +122,8 @@ async function handleRelayMessage(
   socket: import('node:net').Socket,
   tools: ToolsBridge,
   log: { error: (msg: string, data?: Record<string, unknown>) => void },
-  userId?: string
+  userId?: string,
+  onToolResult?: (result: ToolResult) => void
 ): Promise<void> {
   try {
     const msg = JSON.parse(line) as { id: string; method: string; toolId: string; params: Record<string, unknown> }
@@ -79,6 +131,10 @@ async function handleRelayMessage(
     if (msg.method === 'execute') {
       const result = await tools.execute(msg.toolId, msg.params, userId)
       socket.write(JSON.stringify({ id: msg.id, result }) + '\n')
+      // Notify waiters about the tool result
+      if (onToolResult) {
+        onToolResult(result)
+      }
     }
   } catch (error) {
     log.error('Relay message handling error', { error: error instanceof Error ? error.message : String(error) })
