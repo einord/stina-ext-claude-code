@@ -4,7 +4,6 @@
  * Spawns claude CLI process and yields parsed stream events.
  */
 
-import type { StreamEvent } from '@stina/extension-api/runtime'
 import type { ClaudeEvent } from './types.js'
 
 export interface ClaudeCliOptions {
@@ -12,7 +11,6 @@ export interface ClaudeCliOptions {
   prompt: string
   model: string
   maxTurns: number
-  cwd?: string
   sessionId?: string
   mcpConfigPath?: string
   allowedTools?: string[]
@@ -31,8 +29,30 @@ export type CliStreamEvent =
  */
 export async function* runClaudeCode(options: ClaudeCliOptions): AsyncGenerator<CliStreamEvent, void, unknown> {
   // Dynamic import for Node.js modules (runs in Worker Thread)
-  const { spawn } = await import('node:child_process')
-  const { homedir } = await import('node:os')
+  const { spawn, execSync } = await import('node:child_process')
+  const { existsSync } = await import('node:fs')
+
+  // Quick diagnostic: verify child_process works in this Worker Thread
+  let childProcessWorks = false
+  try {
+    execSync('echo __cp_test__', { encoding: 'utf-8' })
+    childProcessWorks = true
+  } catch {
+    // child_process doesn't work
+  }
+
+  if (!childProcessWorks) {
+    yield {
+      type: 'error',
+      message: 'child_process is not available in this Worker Thread. Claude Code CLI requires child_process.spawn() support.',
+    }
+    return
+  }
+
+  // Resolve the full path to the claude binary
+  const claudePath = resolveClaudePath(options.claudePath, execSync, existsSync)
+
+  const isRoot = process.getuid ? process.getuid() === 0 : false
 
   const args: string[] = [
     '-p', options.prompt,
@@ -40,8 +60,12 @@ export async function* runClaudeCode(options: ClaudeCliOptions): AsyncGenerator<
     '--verbose',
     '--model', options.model,
     '--max-turns', String(options.maxTurns),
-    '--dangerously-skip-permissions',
   ]
+
+  // --dangerously-skip-permissions cannot be used as root
+  if (!isRoot) {
+    args.push('--dangerously-skip-permissions')
+  }
 
   if (options.sessionId) {
     args.push('--resume', options.sessionId)
@@ -55,27 +79,47 @@ export async function* runClaudeCode(options: ClaudeCliOptions): AsyncGenerator<
     args.push('--allowedTools', ...options.allowedTools, 'mcp__stina-tools__*')
   }
 
-  const cwd = options.cwd || homedir()
+  // Use /tmp as working directory (safe default inside containers)
+  const cwd = '/tmp'
 
   // Remove CLAUDE_CODE_ENTRY_POINT to avoid blocking nested sessions
   const env = { ...process.env }
   delete env.CLAUDE_CODE_ENTRY_POINT
 
-  const child = spawn(options.claudePath, args, {
-    cwd,
-    env,
-    stdio: ['pipe', 'pipe', 'pipe'],
-  })
+  // Collect stderr for error reporting
+  let stderrOutput = ''
+
+  let child
+  try {
+    child = spawn(claudePath, args, {
+      cwd,
+      env,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+  } catch (error) {
+    yield {
+      type: 'error',
+      message: `Failed to spawn claude CLI at "${claudePath}": ${error instanceof Error ? error.message : String(error)}`,
+    }
+    return
+  }
 
   // Close stdin immediately — we pass everything via -p
   child.stdin.end()
 
+  // Capture stderr
+  child.stderr.on('data', (chunk: Buffer) => {
+    stderrOutput += chunk.toString()
+  })
+
   let sessionId: string | undefined
+  let spawnError: Error | undefined
 
   // Create a promise to track process completion
   const exitPromise = new Promise<number | null>((resolve) => {
     child.on('close', (code) => resolve(code))
-    child.on('error', () => {
+    child.on('error', (err) => {
+      spawnError = err
       resolve(null)
     })
   })
@@ -88,8 +132,10 @@ export async function* runClaudeCode(options: ClaudeCliOptions): AsyncGenerator<
       if (!line.trim()) continue
 
       let event: ClaudeEvent
+      let rawEvent: Record<string, unknown>
       try {
-        event = JSON.parse(line) as ClaudeEvent
+        rawEvent = JSON.parse(line) as Record<string, unknown>
+        event = rawEvent as unknown as ClaudeEvent
       } catch {
         // Skip non-JSON lines (e.g. stderr leak)
         continue
@@ -106,13 +152,39 @@ export async function* runClaudeCode(options: ClaudeCliOptions): AsyncGenerator<
           yield { type: 'thinking', text: event.delta.thinking }
         }
       } else if (event.type === 'assistant') {
-        // Full assistant message — extract tool use info for display
+        // Full assistant message — extract text and tool use
         for (const block of event.message.content) {
-          if (block.type === 'tool_use') {
+          if (block.type === 'text') {
+            yield { type: 'content', text: block.text }
+          } else if (block.type === 'tool_use') {
             yield { type: 'content', text: `\n[Tool: ${block.name}]\n` }
           }
         }
       } else if (event.type === 'result') {
+        // Log the full result event for debugging
+        // (visible via context.log.debug in the provider)
+        const resultAny = rawEvent
+        if (event.is_error || (event.subtype && event.subtype !== 'success')) {
+          const errorDetail = (resultAny['result'] as string)
+            || (resultAny['error'] as string)
+            || JSON.stringify(resultAny).slice(0, 500)
+          yield {
+            type: 'error',
+            message: `Claude Code: ${errorDetail}`,
+          }
+          return
+        }
+
+        // If usage shows 0 tokens, something went wrong silently
+        if (event.usage && event.usage.input_tokens === 0 && event.usage.output_tokens === 0) {
+          const resultStr = JSON.stringify(resultAny)
+          yield {
+            type: 'error',
+            message: `Claude Code returned empty result (0 tokens). Result: ${resultStr}${stderrOutput.trim() ? ` — stderr: ${stderrOutput.trim()}` : ''}`,
+          }
+          return
+        }
+
         yield {
           type: 'done',
           usage: event.usage ? {
@@ -128,7 +200,24 @@ export async function* runClaudeCode(options: ClaudeCliOptions): AsyncGenerator<
     // If we get here without a result event, wait for process to exit
     const exitCode = await exitPromise
     if (exitCode !== 0) {
-      yield { type: 'error', message: `Claude Code process exited with code ${exitCode}` }
+      // Build a helpful error message
+      const parts: string[] = []
+
+      if (spawnError) {
+        if ((spawnError as NodeJS.ErrnoException).code === 'ENOENT') {
+          parts.push(`Claude CLI not found at "${claudePath}". Is it installed? PATH=${process.env.PATH ?? '(not set)'}`)
+        } else {
+          parts.push(`Spawn error: ${spawnError.message}`)
+        }
+      } else {
+        parts.push(`Claude Code exited with code ${exitCode}`)
+      }
+
+      if (stderrOutput.trim()) {
+        parts.push(`stderr: ${stderrOutput.trim().slice(0, 500)}`)
+      }
+
+      yield { type: 'error', message: parts.join(' — ') }
     }
 
   } catch (error) {
@@ -137,6 +226,57 @@ export async function* runClaudeCode(options: ClaudeCliOptions): AsyncGenerator<
       message: error instanceof Error ? error.message : String(error),
     }
   }
+}
+
+/**
+ * Resolve the full path to the claude CLI binary.
+ *
+ * Worker Threads may not resolve PATH the same way as the shell,
+ * so we try multiple strategies to find the binary.
+ */
+function resolveClaudePath(
+  configuredPath: string,
+  execSync: typeof import('node:child_process').execSync,
+  existsSync: typeof import('node:fs').existsSync
+): string {
+  // If it's already an absolute path, use it directly
+  if (configuredPath.startsWith('/') || configuredPath.includes('\\')) {
+    return configuredPath
+  }
+
+  // Strategy 1: Try `which` / `where` to resolve from PATH
+  try {
+    const cmd = process.platform === 'win32' ? 'where' : 'which'
+    const resolved = execSync(`${cmd} ${configuredPath}`, { encoding: 'utf-8' }).trim().split('\n')[0]
+    if (resolved) return resolved
+  } catch {
+    // which failed, try other strategies
+  }
+
+  // Strategy 2: Check common installation paths
+  const commonPaths = [
+    '/usr/local/bin/claude',
+    '/usr/bin/claude',
+    '/root/.npm-global/bin/claude',
+    '/home/node/.npm-global/bin/claude',
+  ]
+
+  for (const p of commonPaths) {
+    if (existsSync(p)) {
+      return p
+    }
+  }
+
+  // Fall back to the configured path and let spawn handle the error
+  return configuredPath
+}
+
+/**
+ * Escape a string for safe use in a POSIX shell command.
+ * Wraps in single quotes and escapes embedded single quotes.
+ */
+function shellEscape(arg: string): string {
+  return `'${arg.replace(/'/g, "'\\''")}'`
 }
 
 /**

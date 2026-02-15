@@ -10,7 +10,7 @@ import type { ToolDefinition, ToolResult } from '@stina/extension-api/runtime'
 /** ToolsAPI interface - matches what context.tools provides */
 export interface ToolsBridge {
   list(): Promise<ToolDefinition[]>
-  execute(toolId: string, params: Record<string, unknown>): Promise<ToolResult>
+  execute(toolId: string, params: Record<string, unknown>, userId?: string): Promise<ToolResult>
 }
 
 export interface ToolRelayServer {
@@ -23,7 +23,8 @@ export interface ToolRelayServer {
  */
 export async function startToolRelay(
   tools: ToolsBridge,
-  log: { info: (msg: string, data?: Record<string, unknown>) => void; error: (msg: string, data?: Record<string, unknown>) => void }
+  log: { info: (msg: string, data?: Record<string, unknown>) => void; error: (msg: string, data?: Record<string, unknown>) => void },
+  userId?: string
 ): Promise<ToolRelayServer> {
   const net = await import('node:net')
 
@@ -38,7 +39,7 @@ export async function startToolRelay(
 
         for (const line of lines) {
           if (!line.trim()) continue
-          handleRelayMessage(line, socket, tools, log)
+          handleRelayMessage(line, socket, tools, log, userId)
         }
       })
 
@@ -69,13 +70,14 @@ async function handleRelayMessage(
   line: string,
   socket: import('node:net').Socket,
   tools: ToolsBridge,
-  log: { error: (msg: string, data?: Record<string, unknown>) => void }
+  log: { error: (msg: string, data?: Record<string, unknown>) => void },
+  userId?: string
 ): Promise<void> {
   try {
     const msg = JSON.parse(line) as { id: string; method: string; toolId: string; params: Record<string, unknown> }
 
     if (msg.method === 'execute') {
-      const result = await tools.execute(msg.toolId, msg.params)
+      const result = await tools.execute(msg.toolId, msg.params, userId)
       socket.write(JSON.stringify({ id: msg.id, result }) + '\n')
     }
   } catch (error) {

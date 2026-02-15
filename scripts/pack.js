@@ -16,8 +16,8 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execSync } from 'node:child_process'
 
-const __dirname = dirname(fileURLToPath(import.meta.url))
-const rootDir = join(__dirname, '..')
+const __scriptdir = dirname(fileURLToPath(import.meta.url))
+const rootDir = join(__scriptdir, '..')
 const releasesDir = join(rootDir, 'releases')
 
 // Read manifest for version

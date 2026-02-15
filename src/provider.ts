@@ -42,37 +42,38 @@ async function getModels(context: ExtensionContext): Promise<ModelInfo[]> {
 }
 
 /**
- * Extract the last user message as prompt for Claude Code
+ * Build the prompt for Claude Code from the message history.
+ *
+ * Claude Code takes a single prompt string (not a message array), so we
+ * combine system/instruction context with the user message.
+ *
+ * At conversation start, Stina sends only instruction messages (no user
+ * message) to trigger a greeting — we handle that by using the last
+ * instruction as the prompt.
  */
-function extractPrompt(messages: ChatMessage[]): string {
-  // Find the last user message
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const msg = messages[i]
-    const msgAny = msg as unknown as Record<string, unknown>
-    const role = msg.role ?? msgAny['type']
-    if (role === 'user' && msg.content) {
-      return msg.content
-    }
-  }
-  return ''
-}
-
-/**
- * Build system context from non-user messages for Claude Code
- */
-function buildSystemContext(messages: ChatMessage[]): string {
-  const parts: string[] = []
+function buildPrompt(messages: ChatMessage[]): string {
+  const systemParts: string[] = []
+  let userPrompt = ''
 
   for (const msg of messages) {
-    const msgAny = msg as unknown as Record<string, unknown>
-    const role = msg.role ?? msgAny['type']
-
-    if ((role === 'system' || (role as string) === 'instruction') && msg.content) {
-      parts.push(msg.content)
+    if (msg.role === 'user' && msg.content) {
+      userPrompt = msg.content
+    } else if (msg.role === 'system' && msg.content) {
+      systemParts.push(msg.content)
     }
   }
 
-  return parts.join('\n\n')
+  // If no user message, use the last system/instruction message as prompt
+  // This handles the conversation-start greeting flow
+  if (!userPrompt && systemParts.length > 0) {
+    userPrompt = systemParts.pop()!
+  }
+
+  if (systemParts.length > 0) {
+    return `${systemParts.join('\n\n')}\n\n---\n\n${userPrompt}`
+  }
+
+  return userPrompt
 }
 
 /**
@@ -85,23 +86,21 @@ async function* streamChat(
 ): AsyncGenerator<StreamEvent, void, unknown> {
   const settings = options.settings || {}
   const claudePath = (settings.claudePath as string) || DEFAULT_CLAUDE_PATH
-  const cwd = (settings.workingDirectory as string) || undefined
   const maxTurns = parseInt((settings.maxTurns as string) || String(DEFAULT_MAX_TURNS), 10)
   const enableStinaTools = (settings.enableStinaTools as string) !== 'off'
   const model = options.model || 'sonnet'
+  const userId = (settings.userId as string) || undefined
 
-  // Extract prompt from messages
-  const userPrompt = extractPrompt(messages)
-  if (!userPrompt) {
-    yield { type: 'error', message: 'No user message found' }
+  // Build prompt from messages
+  const fullPrompt = buildPrompt(messages)
+  if (!fullPrompt) {
+    context.log.error('No prompt could be extracted from messages', {
+      messageCount: messages.length,
+      roles: messages.map((m) => m.role),
+    })
+    yield { type: 'error', message: 'No message content found' }
     return
   }
-
-  // Build system context
-  const systemContext = buildSystemContext(messages)
-  const fullPrompt = systemContext
-    ? `${systemContext}\n\n---\n\n${userPrompt}`
-    : userPrompt
 
   // Derive a conversation key from settings for session tracking
   const conversationId = (settings.conversationId as string) || 'default'
@@ -124,7 +123,7 @@ async function* streamChat(
       try {
         const tools = await context.tools.list()
         if (tools.length > 0) {
-          relay = await startToolRelay(context.tools, context.log)
+          relay = await startToolRelay(context.tools, context.log, userId)
           mcpConfigPath = await createMcpConfigFile(tools, relay.port)
           // Allow all Claude Code built-in tools plus Stina tools
           allowedTools = [
@@ -146,13 +145,16 @@ async function* streamChat(
       prompt: fullPrompt,
       model,
       maxTurns,
-      cwd,
       sessionId: existingSessionId,
       mcpConfigPath,
       allowedTools,
     })
 
+    let eventCount = 0
     for await (const event of stream) {
+      eventCount++
+      context.log.debug('CLI stream event', { type: event.type, eventCount })
+
       switch (event.type) {
         case 'content':
           yield { type: 'content', text: event.text }
@@ -165,18 +167,22 @@ async function* streamChat(
         case 'session_init':
           // Store session mapping for future resume
           sessionMap.set(conversationId, event.sessionId)
+          context.log.info('Session initialized', { sessionId: event.sessionId })
           break
 
         case 'done':
+          context.log.info('Claude Code stream done', { eventCount, usage: event.usage })
           yield { type: 'done', usage: event.usage }
           return
 
         case 'error':
+          context.log.error('Claude Code stream error', { message: event.message })
           yield { type: 'error', message: event.message }
           return
       }
     }
 
+    context.log.info('Claude Code stream ended without done event', { eventCount })
     // If stream ended without done event
     yield { type: 'done' }
 

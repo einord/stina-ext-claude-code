@@ -8,6 +8,8 @@
     "build": "tsup",
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
     "pack-extension": "node scripts/pack.js"
   },
   "keywords": [
@@ -28,9 +30,13 @@
     "url": "https://github.com/einord/stina-ext-claude-code.git"
   },
   "devDependencies": {
+    "@eslint/js": "^9.0.0",
     "@stina/extension-api": "link:../stina/packages/extension-api",
     "@types/node": "^22.0.0",
+    "eslint": "^9.0.0",
+    "eslint-config-prettier": "^9.1.0",
     "tsup": "^8.5.1",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.50.0"
   }
 }

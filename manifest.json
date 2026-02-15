@@ -34,7 +34,7 @@
           "enableStinaTools": "on"
         },
         "configSchema": {
-          "order": ["claudePath", "workingDirectory", "maxTurns", "enableStinaTools"],
+          "order": ["claudePath", "maxTurns", "enableStinaTools"],
           "properties": {
             "claudePath": {
               "type": "string",
@@ -42,12 +42,6 @@
               "description": "Path to the Claude CLI executable",
               "default": "claude",
               "placeholder": "claude"
-            },
-            "workingDirectory": {
-              "type": "string",
-              "title": "Working Directory",
-              "description": "Working directory for Claude Code (defaults to home directory)",
-              "placeholder": "~/projects"
             },
             "maxTurns": {
               "type": "select",
