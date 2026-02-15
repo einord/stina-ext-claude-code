@@ -89,7 +89,7 @@ async function* streamChat(
   const maxTurns = parseInt((settings.maxTurns as string) || String(DEFAULT_MAX_TURNS), 10)
   const enableStinaTools = (settings.enableStinaTools as string) !== 'off'
   const model = options.model || 'sonnet'
-  const userId = (settings.userId as string) || undefined
+  const userId = (options.context?.userId as string) || undefined
 
   // Build prompt from messages
   const fullPrompt = buildPrompt(messages)
