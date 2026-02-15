@@ -1,0 +1,80 @@
+{
+  "$schema": "https://stina.app/schemas/extension-manifest.json",
+  "id": "claude-code-provider",
+  "name": "Claude Code AI Provider",
+  "version": "0.1.0",
+  "description": "Connect Stina to Claude Code CLI for AI assistance with tool capabilities.",
+  "type": "provider",
+  "author": {
+    "name": "Stina Team",
+    "url": "https://github.com/einord"
+  },
+  "repository": "https://github.com/einord/stina-ext-claude-code",
+  "license": "MIT",
+  "engines": {
+    "stina": ">=0.5.0"
+  },
+  "platforms": ["web", "electron", "tui"],
+  "main": "index.js",
+  "permissions": [
+    "provider.register",
+    "tools.list",
+    "tools.execute"
+  ],
+  "contributes": {
+    "providers": [
+      {
+        "id": "claude-code",
+        "name": "Claude Code",
+        "description": "AI assistance via Claude Code CLI with tool capabilities",
+        "suggestedDefaultModel": "sonnet",
+        "defaultSettings": {
+          "claudePath": "claude",
+          "maxTurns": "25",
+          "enableStinaTools": "on"
+        },
+        "configSchema": {
+          "order": ["claudePath", "workingDirectory", "maxTurns", "enableStinaTools"],
+          "properties": {
+            "claudePath": {
+              "type": "string",
+              "title": "Claude CLI Path",
+              "description": "Path to the Claude CLI executable",
+              "default": "claude",
+              "placeholder": "claude"
+            },
+            "workingDirectory": {
+              "type": "string",
+              "title": "Working Directory",
+              "description": "Working directory for Claude Code (defaults to home directory)",
+              "placeholder": "~/projects"
+            },
+            "maxTurns": {
+              "type": "select",
+              "title": "Max Turns",
+              "description": "Maximum number of tool-use turns Claude Code can make",
+              "default": "25",
+              "options": [
+                { "value": "5", "label": "5" },
+                { "value": "10", "label": "10" },
+                { "value": "25", "label": "25 (default)" },
+                { "value": "50", "label": "50" },
+                { "value": "100", "label": "100" }
+              ]
+            },
+            "enableStinaTools": {
+              "type": "select",
+              "title": "Stina Tools",
+              "description": "Enable Stina tools (calendar, work manager, etc.) via MCP bridge",
+              "default": "on",
+              "options": [
+                { "value": "on", "label": "On" },
+                { "value": "off", "label": "Off" }
+              ]
+            }
+          }
+        }
+      }
+    ]
+  }
+}

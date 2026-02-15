@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Release artifacts
+releases/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Package artifacts
+*.zip
+
+# npm lock file (using pnpm)
+package-lock.json
+
+# Local pnpm link overrides
+pnpm-workspace.yaml
