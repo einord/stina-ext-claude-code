@@ -271,15 +271,6 @@ function resolveClaudePath(
   // Fall back to the configured path and let spawn handle the error
   return configuredPath
 }
-
-/**
- * Escape a string for safe use in a POSIX shell command.
- * Wraps in single quotes and escapes embedded single quotes.
- */
-function shellEscape(arg: string): string {
-  return `'${arg.replace(/'/g, "'\\''")}'`
-}
-
 /**
  * Read lines from a readable stream
  */
