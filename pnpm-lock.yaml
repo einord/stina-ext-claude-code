@@ -12,8 +12,8 @@ importers:
         specifier: ^9.0.0
         version: 9.39.2
       '@stina/extension-api':
-        specifier: link:../stina/packages/extension-api
-        version: link:../stina/packages/extension-api
+        specifier: ^0.30.0
+        version: 0.30.0
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.11
@@ -395,6 +395,9 @@ packages:
     resolution: {integrity: sha512-mxRFDdHIWRxg3UfIIAwCm6NzvxG0jDX/wBN6KsQFTvKFqqg9vTrWUE68qEjHt19A5wwx5X5aUi2zuZT7YR0jrA==}
     cpu: [x64]
     os: [win32]
+
+  '@stina/extension-api@0.30.0':
+    resolution: {integrity: sha512-jm6kZlY1iEWgIbXQCd7sjIosszKWit5Y/sBlogPZS1dhk4TRa3qEFN/s7G/5K7ZGpWD6DibowNaiidbFNYwVew==}
 
   '@types/estree@1.0.8':
     resolution: {integrity: sha512-dWHzHa2WqEXI/O1E9OjrocMTKJl2mSrEolh1Iomrv6U+JuNwaHXsXx9bLu5gG7BUWFIN0skIQJQ/L1rIex4X6w==}
@@ -958,6 +961,9 @@ packages:
     resolution: {integrity: sha512-rVksvsnNCdJ/ohGc6xgPwyN8eheCxsiLM8mxuE/t/mOVqJewPuO1miLpTHQiRgTKCLexL4MeAFVagts7HmNZ2Q==}
     engines: {node: '>=10'}
 
+  zod@3.25.76:
+    resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
+
 snapshots:
 
   '@esbuild/aix-ppc64@0.27.3':
@@ -1183,6 +1189,10 @@ snapshots:
 
   '@rollup/rollup-win32-x64-msvc@4.57.1':
     optional: true
+
+  '@stina/extension-api@0.30.0':
+    dependencies:
+      zod: 3.25.76
 
   '@types/estree@1.0.8': {}
 
@@ -1778,3 +1788,5 @@ snapshots:
   word-wrap@1.2.5: {}
 
   yocto-queue@0.1.0: {}
+
+  zod@3.25.76: {}
